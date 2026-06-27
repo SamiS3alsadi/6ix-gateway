@@ -17,7 +17,10 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-payment_intent_status = sa.Enum(
+# create_type=False — we create the enums explicitly with checkfirst=True so
+# the implicit CREATE TYPE that op.create_table would emit doesn't fire twice
+# and raise DuplicateObjectError on re-runs / interrupted migrations.
+payment_intent_status = postgresql.ENUM(
     "requires_payment_method",
     "requires_confirmation",
     "requires_action",
@@ -26,12 +29,14 @@ payment_intent_status = sa.Enum(
     "canceled",
     "failed",
     name="payment_intent_status",
+    create_type=False,
 )
 
-ledger_entry_direction = sa.Enum(
+ledger_entry_direction = postgresql.ENUM(
     "debit",
     "credit",
     name="ledger_entry_direction",
+    create_type=False,
 )
 
 
@@ -177,5 +182,6 @@ def downgrade() -> None:
     )
     op.drop_table("payment_intents")
 
-    ledger_entry_direction.drop(op.get_bind(), checkfirst=True)
-    payment_intent_status.drop(op.get_bind(), checkfirst=True)
+    bind = op.get_bind()
+    ledger_entry_direction.drop(bind, checkfirst=True)
+    payment_intent_status.drop(bind, checkfirst=True)
