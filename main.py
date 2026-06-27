@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("starting %s in %s mode", settings.app_name, settings.app_env)
+    logger.info(
+        "stripe webhook secret loaded: prefix=%s",
+        settings.stripe_webhook_secret_prefix,
+    )
     yield
     logger.info("shutting down %s", settings.app_name)
 

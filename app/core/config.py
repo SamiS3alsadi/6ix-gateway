@@ -39,6 +39,18 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.app_env == "production"
 
+    @property
+    def stripe_webhook_secret_prefix(self) -> str:
+        """First 10 chars of the webhook secret for startup diagnostics.
+
+        Used only for logging — never log or expose the full value. A real
+        Stripe webhook secret always starts with `whsec_` so the prefix is
+        enough to confirm it's loading from the right env var without
+        revealing key material.
+        """
+        s = self.stripe_webhook_secret or ""
+        return f"{s[:10]}...(len={len(s)})" if s else "<empty>"
+
 
 @lru_cache
 def get_settings() -> Settings:
