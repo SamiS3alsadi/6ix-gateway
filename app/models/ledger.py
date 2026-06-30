@@ -44,7 +44,11 @@ class LedgerEntry(Base):
 
     account: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     direction: Mapped[LedgerEntryDirection] = mapped_column(
-        SQLEnum(LedgerEntryDirection, name="ledger_entry_direction"),
+        SQLEnum(
+            LedgerEntryDirection,
+            name="ledger_entry_direction",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
     )
 

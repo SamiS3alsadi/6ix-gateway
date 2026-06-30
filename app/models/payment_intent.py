@@ -47,8 +47,16 @@ class PaymentIntent(Base):
     amount_received: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     amount_refunded: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
+    # values_callable: SQLAlchemy defaults to serializing enum members by their
+    # Python name (uppercase). The Postgres enum was created with lowercase
+    # values, so we force value-based serialization to match what the migration
+    # wrote.
     status: Mapped[PaymentIntentStatus] = mapped_column(
-        SQLEnum(PaymentIntentStatus, name="payment_intent_status"),
+        SQLEnum(
+            PaymentIntentStatus,
+            name="payment_intent_status",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         default=PaymentIntentStatus.REQUIRES_PAYMENT_METHOD,
         nullable=False,
         index=True,
