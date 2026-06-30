@@ -1,13 +1,17 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import dashboard, merchants, payments, refunds, webhooks
 from app.core.config import settings
 from app.core.errors import AppException, ErrorCode, ErrorResponse
+
+_STATIC_DIR = Path(__file__).parent / "app" / "static"
 
 logging.basicConfig(
     level=settings.log_level,
@@ -110,3 +114,13 @@ app.include_router(webhooks.router)
 app.include_router(refunds.router)
 app.include_router(dashboard.router)
 app.include_router(merchants.router)
+
+
+# --- Static checkout UI ----------------------------------------------------
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+@app.get("/checkout", include_in_schema=False)
+async def checkout_page() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "checkout.html", media_type="text/html")
