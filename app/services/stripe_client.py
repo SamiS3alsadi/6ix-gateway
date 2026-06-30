@@ -102,5 +102,51 @@ class StripeClient:
             secret=settings.stripe_webhook_secret,
         )
 
+    async def list_balance_transactions(
+        self,
+        *,
+        created_gte: int,
+        created_lt: int,
+        types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Page through balance transactions for the [gte, lt) UTC window.
+
+        Returns the BTs with their `source` expanded so the caller can map a
+        charge → payment_intent without a second round trip. Stripe paginates
+        at 100; we walk the cursor until exhausted.
+        """
+
+        def _list() -> list[dict[str, Any]]:
+            collected: list[dict[str, Any]] = []
+            params: dict[str, Any] = {
+                "created": {"gte": created_gte, "lt": created_lt},
+                "limit": 100,
+                "expand": ["data.source"],
+            }
+            if types:
+                # The API accepts one `type` at a time; iterate.
+                for t in types:
+                    page_params = {**params, "type": t}
+                    while True:
+                        page = stripe.BalanceTransaction.list(**page_params)
+                        collected.extend(d.to_dict() for d in page.data)
+                        if not page.has_more:
+                            break
+                        page_params = {
+                            **page_params,
+                            "starting_after": page.data[-1].id,
+                        }
+                return collected
+
+            while True:
+                page = stripe.BalanceTransaction.list(**params)
+                collected.extend(d.to_dict() for d in page.data)
+                if not page.has_more:
+                    break
+                params = {**params, "starting_after": page.data[-1].id}
+            return collected
+
+        return await asyncio.to_thread(_list)
+
 
 stripe_client = StripeClient()

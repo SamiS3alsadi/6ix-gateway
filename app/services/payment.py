@@ -6,9 +6,18 @@ underlying API call is also idempotent.
 """
 from __future__ import annotations
 
+import stripe
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import (
+    IdempotencyConflictError,
+    InvalidAmountError,
+    InvalidStateError,
+    PaymentNotFoundError,
+    RefundFailedError,
+    RefundNotAllowedError,
+)
 from app.models.ledger import LedgerEntryDirection
 from app.models.payment_intent import PaymentIntent, PaymentIntentStatus
 from app.schemas.payment import (
@@ -18,14 +27,6 @@ from app.schemas.payment import (
 )
 from app.services.ledger import LedgerLeg, record_transaction
 from app.services.stripe_client import stripe_client
-
-
-class PaymentError(Exception):
-    pass
-
-
-class IdempotencyConflict(PaymentError):
-    """An idempotency_key reused with different parameters."""
 
 
 async def _find_by_idempotency_key(
@@ -53,8 +54,12 @@ async def create_intent(
             existing.amount != payload.amount
             or existing.currency != payload.currency.lower()
         ):
-            raise IdempotencyConflict(
-                "idempotency_key reused with different parameters"
+            raise IdempotencyConflictError(
+                detail=(
+                    f"idempotency_key={payload.idempotency_key} previously "
+                    f"used for amount={existing.amount} currency={existing.currency}; "
+                    f"new request has amount={payload.amount} currency={payload.currency.lower()}"
+                )
             )
         return existing
 
@@ -113,7 +118,9 @@ async def confirm_intent(
 ) -> PaymentIntent:
     intent = await get_by_id(session, payment_intent_id)
     if intent is None:
-        raise PaymentError(f"PaymentIntent {payment_intent_id} not found")
+        raise PaymentNotFoundError(
+            detail=f"PaymentIntent {payment_intent_id} not found"
+        )
     if intent.status in (
         PaymentIntentStatus.SUCCEEDED,
         PaymentIntentStatus.CANCELED,
@@ -122,7 +129,9 @@ async def confirm_intent(
         return intent
 
     if not intent.stripe_payment_intent_id:
-        raise PaymentError("PaymentIntent has no Stripe id; cannot confirm")
+        raise InvalidStateError(
+            detail=f"PaymentIntent {payment_intent_id} has no Stripe id; cannot confirm"
+        )
 
     stripe_intent = await stripe_client.confirm_payment_intent(
         stripe_payment_intent_id=intent.stripe_payment_intent_id,
@@ -142,14 +151,23 @@ async def cancel_intent(
 ) -> PaymentIntent:
     intent = await get_by_id(session, payment_intent_id)
     if intent is None:
-        raise PaymentError(f"PaymentIntent {payment_intent_id} not found")
+        raise PaymentNotFoundError(
+            detail=f"PaymentIntent {payment_intent_id} not found"
+        )
     if intent.status == PaymentIntentStatus.CANCELED:
         return intent
     if intent.status == PaymentIntentStatus.SUCCEEDED:
-        raise PaymentError("Cannot cancel a succeeded payment; use refund instead")
+        raise InvalidStateError(
+            detail=(
+                f"PaymentIntent {payment_intent_id} is succeeded; "
+                "use refund instead of cancel"
+            )
+        )
 
     if not intent.stripe_payment_intent_id:
-        raise PaymentError("PaymentIntent has no Stripe id; cannot cancel")
+        raise InvalidStateError(
+            detail=f"PaymentIntent {payment_intent_id} has no Stripe id; cannot cancel"
+        )
 
     stripe_intent = await stripe_client.cancel_payment_intent(
         stripe_payment_intent_id=intent.stripe_payment_intent_id,
@@ -231,4 +249,86 @@ async def apply_succeeded_event(
         description="payment_intent.succeeded",
     )
     await session.flush()
+    return intent
+
+
+async def refund_intent(
+    session: AsyncSession,
+    payment_intent_id: str,
+    *,
+    idempotency_key: str,
+    amount: int | None = None,
+    reason: str | None = None,
+) -> PaymentIntent:
+    """Refund a succeeded payment intent — partial or full.
+
+    Defaults to a full refund of the remaining (non-refunded) captured amount.
+    Writes a double-entry pair: debit captured revenue, credit the customer.
+    Updates `amount_refunded` on the intent and forwards the idempotency_key
+    to Stripe so a retry hits the same Stripe refund object.
+    """
+    intent = await get_by_id(session, payment_intent_id)
+    if intent is None:
+        raise PaymentNotFoundError(
+            detail=f"PaymentIntent {payment_intent_id} not found"
+        )
+    if intent.status != PaymentIntentStatus.SUCCEEDED:
+        raise RefundNotAllowedError(
+            detail=(
+                f"PaymentIntent {payment_intent_id} is {intent.status.value}; "
+                "only succeeded intents are refundable"
+            )
+        )
+    if not intent.stripe_payment_intent_id:
+        raise RefundNotAllowedError(
+            detail=f"PaymentIntent {payment_intent_id} has no Stripe id"
+        )
+
+    refundable = intent.amount_received - intent.amount_refunded
+    if refundable <= 0:
+        raise InvalidAmountError(
+            detail=f"PaymentIntent {payment_intent_id} is already fully refunded"
+        )
+
+    refund_amount = amount if amount is not None else refundable
+    if refund_amount <= 0 or refund_amount > refundable:
+        raise InvalidAmountError(
+            detail=f"refund amount {refund_amount} outside 1..{refundable}"
+        )
+
+    try:
+        refund = await stripe_client.create_refund(
+            stripe_payment_intent_id=intent.stripe_payment_intent_id,
+            amount=refund_amount,
+            idempotency_key=idempotency_key,
+            reason=reason,
+        )
+    except stripe.StripeError as exc:
+        raise RefundFailedError(detail=str(exc)) from exc
+
+    intent.amount_refunded += refund_amount
+
+    customer_account = f"customer:{intent.customer_id or 'anon'}"
+    await record_transaction(
+        session,
+        legs=[
+            LedgerLeg(
+                account="payments_captured",
+                direction=LedgerEntryDirection.DEBIT,
+                amount=refund_amount,
+            ),
+            LedgerLeg(
+                account=customer_account,
+                direction=LedgerEntryDirection.CREDIT,
+                amount=refund_amount,
+            ),
+        ],
+        currency=intent.currency,
+        payment_intent_id=intent.id,
+        description=f"refund:{refund['id']}",
+        metadata={"stripe_refund_id": refund["id"], "reason": reason},
+    )
+
+    await session.commit()
+    await session.refresh(intent)
     return intent

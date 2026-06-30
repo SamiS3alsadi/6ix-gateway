@@ -2,11 +2,16 @@ import logging
 from datetime import datetime, timezone
 
 import stripe
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.errors import (
+    InvalidPayloadError,
+    InvalidSignatureError,
+    WebhookHandlerFailedError,
+)
 from app.models.webhook_event import WebhookEvent
 from app.services import payment as payment_service
 from app.services.stripe_client import stripe_client
@@ -23,10 +28,7 @@ async def stripe_webhook(
 ) -> dict:
     if not stripe_signature:
         logger.warning("webhook rejected: missing Stripe-Signature header")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing Stripe-Signature header",
-        )
+        raise InvalidSignatureError(detail="missing Stripe-Signature header")
 
     # IMPORTANT: signature verification requires the *raw* request bytes.
     # request.body() returns the unparsed body — never replace this with a
@@ -51,17 +53,11 @@ async def stripe_webhook(
             len(payload),
             settings.stripe_webhook_secret_prefix,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"invalid signature: {exc}",
-        ) from exc
+        raise InvalidSignatureError(detail=str(exc)) from exc
     except ValueError as exc:
         # Stripe SDK raises ValueError on a malformed JSON payload.
         logger.warning("stripe webhook payload invalid json: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"invalid payload: {exc}",
-        ) from exc
+        raise InvalidPayloadError(detail=str(exc)) from exc
 
     existing = await db.get(WebhookEvent, event["id"])
     if existing is not None and existing.processed_at is not None:
@@ -87,9 +83,8 @@ async def stripe_webhook(
         if evt is not None:
             evt.processing_error = str(exc)[:2048]
             await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="webhook handler error",
+        raise WebhookHandlerFailedError(
+            detail=f"event {event['id']}: {exc}"
         ) from exc
 
     evt = await db.get(WebhookEvent, event["id"])

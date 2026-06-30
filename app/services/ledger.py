@@ -107,3 +107,32 @@ async def list_entries_for_intent(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_balances_by_currency(
+    session: AsyncSession,
+) -> dict[str, dict[str, int]]:
+    """All-accounts breakdown grouped by currency.
+
+    Returns: {currency: {account: balance_in_cents}}. A balanced ledger has
+    sum(balances) == 0 within every currency. Used by the dashboard /balance
+    endpoint as both a position view and a drift sentinel.
+    """
+    signed = case(
+        (LedgerEntry.direction == LedgerEntryDirection.CREDIT, LedgerEntry.amount),
+        else_=-LedgerEntry.amount,
+    )
+    stmt = (
+        select(
+            LedgerEntry.currency,
+            LedgerEntry.account,
+            func.coalesce(func.sum(signed), 0).label("balance"),
+        )
+        .group_by(LedgerEntry.currency, LedgerEntry.account)
+        .order_by(LedgerEntry.currency.asc(), LedgerEntry.account.asc())
+    )
+    result = await session.execute(stmt)
+    grouped: dict[str, dict[str, int]] = {}
+    for currency, account, balance in result.all():
+        grouped.setdefault(currency, {})[account] = int(balance)
+    return grouped

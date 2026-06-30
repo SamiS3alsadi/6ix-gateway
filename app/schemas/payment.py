@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.payment_intent import PaymentIntentStatus
+from app.schemas.ledger import LedgerEntryRead
 
 
 class PaymentIntentCreate(BaseModel):
@@ -48,7 +48,8 @@ class PaymentIntentRead(BaseModel):
 
 
 class RefundCreate(BaseModel):
-    payment_intent_id: str
+    """Refund request body. payment_intent_id comes from the URL path."""
+
     amount: int | None = Field(
         default=None,
         ge=1,
@@ -68,3 +69,16 @@ class RefundRead(BaseModel):
     status: str
     stripe_refund_id: str | None
     created_at: datetime
+
+
+class PaginatedTransactions(BaseModel):
+    items: list[PaymentIntentRead]
+    page: int
+    page_size: int
+    total: int
+
+
+class TransactionDetail(PaymentIntentRead):
+    """A payment intent with its full ledger trail included."""
+
+    ledger_entries: list[LedgerEntryRead] = Field(default_factory=list)

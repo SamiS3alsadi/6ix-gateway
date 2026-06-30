@@ -32,6 +32,7 @@ JSONB.impl = JSON  # type: ignore[assignment]
 
 from app.core import db as db_module
 from app.core.db import Base, get_db
+import app.models  # noqa: F401  — register all ORM models with Base.metadata
 from app.services import stripe_client as stripe_client_module
 from main import app
 
@@ -110,12 +111,11 @@ def stub_stripe(monkeypatch):
     fake.construct_webhook_event = MagicMock()
 
     monkeypatch.setattr(stripe_client_module, "stripe_client", fake)
-    # Also patch the symbol re-exported into service modules.
+    # Also patch the symbol re-exported into service modules. Refund logic
+    # now lives in the payment service, so patching there covers refunds too.
     from app.services import payment as payment_service
-    from app.api import refunds as refunds_router
     from app.api import webhooks as webhooks_router
 
     monkeypatch.setattr(payment_service, "stripe_client", fake)
-    monkeypatch.setattr(refunds_router, "stripe_client", fake)
     monkeypatch.setattr(webhooks_router, "stripe_client", fake)
     return fake
