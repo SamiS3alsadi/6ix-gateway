@@ -25,10 +25,15 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.types import JSON
+from sqlalchemy.ext.compiler import compiles
 
-# Make JSONB usable on SQLite for tests.
-JSONB.impl = JSON  # type: ignore[assignment]
+
+# Make Postgres-specific JSONB compile as plain JSON on SQLite for tests.
+# JSONB already inherits from JSON for value handling — we only need to
+# override the DDL emission so CREATE TABLE renders a SQLite-valid type.
+@compiles(JSONB, "sqlite")
+def _jsonb_sqlite(element, compiler, **kw):  # noqa: ARG001
+    return "JSON"
 
 from app.core import db as db_module
 from app.core.db import Base, get_db
