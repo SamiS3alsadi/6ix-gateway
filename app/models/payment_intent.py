@@ -6,6 +6,7 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     Enum as SQLEnum,
+    ForeignKey,
     Index,
     String,
     func,
@@ -59,6 +60,14 @@ class PaymentIntent(Base):
         ),
         default=PaymentIntentStatus.REQUIRES_PAYMENT_METHOD,
         nullable=False,
+        index=True,
+    )
+
+    # Nullable for now — existing rows from before the auth rollout have no
+    # merchant. Every new create wires this from the authenticated principal.
+    merchant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("merchants.id", ondelete="RESTRICT"),
+        nullable=True,
         index=True,
     )
 

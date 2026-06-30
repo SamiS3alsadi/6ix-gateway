@@ -17,8 +17,8 @@ def _assert_error_shape(body: dict) -> None:
     assert body["detail"] is None or isinstance(body["detail"], str)
 
 
-async def test_unauthorized_shape(client):
-    r = await client.get("/dashboard/balance")  # no X-API-Key
+async def test_unauthorized_shape(no_auth_client):
+    r = await no_auth_client.get("/dashboard/balance")  # no Authorization header
     assert r.status_code == 401
     body = r.json()
     _assert_error_shape(body)

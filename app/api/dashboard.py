@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_api_key
 from app.core.db import get_db
 from app.core.errors import PaymentNotFoundError
-from app.core.security import require_dashboard_api_key
+from app.models.merchant import Merchant
 from app.models.payment_intent import PaymentIntent, PaymentIntentStatus
 from app.schemas.ledger import (
     AccountBalance,
@@ -20,22 +21,24 @@ from app.schemas.payment import (
 from app.services import ledger as ledger_service
 from app.services import payment as payment_service
 
-router = APIRouter(
-    prefix="/dashboard",
-    tags=["dashboard"],
-    dependencies=[Depends(require_dashboard_api_key)],
-)
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("/balance", response_model=BalanceResponse)
-async def get_balance(db: AsyncSession = Depends(get_db)) -> BalanceResponse:
-    """Per-currency, per-account net position from the double-entry ledger.
+async def get_balance(
+    merchant: Merchant = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> BalanceResponse:
+    """Per-currency, per-account position for the **authenticated merchant**.
 
-    `net` per currency is sum(credits) - sum(debits) across every account in
-    that currency. In a healthy ledger it's always 0 — any other value means
-    a transaction was written unbalanced.
+    The double-entry ledger across all merchants always nets to 0; this view
+    restricts to entries whose underlying payment_intent belongs to the
+    authenticated merchant, so per-currency `net` is the merchant's own
+    drift sentinel.
     """
-    grouped = await ledger_service.get_balances_by_currency(db)
+    grouped = await ledger_service.get_balances_by_currency(
+        db, merchant_id=merchant.id
+    )
     currencies = [
         CurrencyBalance(
             currency=currency,
@@ -52,13 +55,14 @@ async def get_balance(db: AsyncSession = Depends(get_db)) -> BalanceResponse:
 
 @router.get("/transactions", response_model=PaginatedTransactions)
 async def list_transactions(
+    merchant: Merchant = Depends(require_api_key),
     db: AsyncSession = Depends(get_db),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
     status_filter: PaymentIntentStatus | None = Query(default=None, alias="status"),
     currency: str | None = Query(default=None, min_length=3, max_length=3),
 ) -> PaginatedTransactions:
-    base = select(PaymentIntent)
+    base = select(PaymentIntent).where(PaymentIntent.merchant_id == merchant.id)
     if status_filter is not None:
         base = base.where(PaymentIntent.status == status_filter)
     if currency is not None:
@@ -86,11 +90,16 @@ async def list_transactions(
 
 @router.get("/transactions/{intent_id}", response_model=TransactionDetail)
 async def get_transaction(
-    intent_id: str, db: AsyncSession = Depends(get_db)
+    intent_id: str,
+    merchant: Merchant = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
 ) -> TransactionDetail:
     intent = await payment_service.get_by_id(db, intent_id)
-    if intent is None:
+    # Same 404 for "doesn't exist" and "belongs to another merchant" — don't
+    # leak cross-tenant intent existence via response code differences.
+    if intent is None or intent.merchant_id != merchant.id:
         raise PaymentNotFoundError(detail=f"PaymentIntent {intent_id} not found")
+
     entries = await ledger_service.list_entries_for_intent(
         db, payment_intent_id=intent_id
     )

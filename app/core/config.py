@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: str = Field(default="dev-only-change-me")
-    dashboard_api_key: str = Field(default="dev-only-dashboard-key")
+    admin_api_key: str = Field(default="dev-only-admin-key")
 
     @property
     def is_production(self) -> bool:

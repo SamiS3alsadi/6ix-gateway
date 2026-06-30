@@ -19,6 +19,7 @@ from app.core.errors import (
     RefundNotAllowedError,
 )
 from app.models.ledger import LedgerEntryDirection
+from app.models.merchant import Merchant
 from app.models.payment_intent import PaymentIntent, PaymentIntentStatus
 from app.schemas.payment import (
     PaymentIntentCancel,
@@ -46,8 +47,18 @@ async def get_by_id(session: AsyncSession, payment_intent_id: str) -> PaymentInt
 
 
 async def create_intent(
-    session: AsyncSession, payload: PaymentIntentCreate
+    session: AsyncSession,
+    payload: PaymentIntentCreate,
+    *,
+    merchant: Merchant | None = None,
 ) -> PaymentIntent:
+    """Create or idempotently retrieve a PaymentIntent.
+
+    `merchant` is the authenticated principal — its id is stamped onto the
+    new row so every intent is tied back to its issuer for scoping/audit.
+    Optional only because internal call sites (workers, backfills) may have
+    no merchant context; the public API always passes one.
+    """
     existing = await _find_by_idempotency_key(session, payload.idempotency_key)
     if existing is not None:
         if (
@@ -78,6 +89,7 @@ async def create_intent(
         amount=payload.amount,
         currency=payload.currency.lower(),
         status=PaymentIntentStatus(stripe_intent["status"]),
+        merchant_id=merchant.id if merchant is not None else None,
         customer_id=payload.customer_id,
         description=payload.description,
         client_secret=stripe_intent.get("client_secret"),

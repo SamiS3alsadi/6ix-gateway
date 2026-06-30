@@ -70,6 +70,23 @@ async def test_retrieve_intent(client, stub_stripe):
     assert response.json()["id"] == intent_id
 
 
+async def test_create_intent_records_authenticated_merchant(
+    client, stub_stripe, merchant_and_key
+):
+    """Every intent created via the public API gets stamped with merchant_id."""
+    merchant_id, _ = merchant_and_key
+    response = await client.post(
+        "/payments/intents",
+        json={
+            "amount": 250,
+            "currency": "usd",
+            "idempotency_key": "merchant-wire-test",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["merchant_id"] == merchant_id
+
+
 async def test_cancel_intent(client, stub_stripe):
     created = await client.post(
         "/payments/intents",

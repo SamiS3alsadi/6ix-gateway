@@ -111,26 +111,41 @@ async def list_entries_for_intent(
 
 async def get_balances_by_currency(
     session: AsyncSession,
+    *,
+    merchant_id: str | None = None,
 ) -> dict[str, dict[str, int]]:
     """All-accounts breakdown grouped by currency.
 
     Returns: {currency: {account: balance_in_cents}}. A balanced ledger has
-    sum(balances) == 0 within every currency. Used by the dashboard /balance
-    endpoint as both a position view and a drift sentinel.
+    sum(balances) == 0 within every currency.
+
+    When `merchant_id` is set, only counts entries whose underlying
+    `payment_intent` belongs to that merchant — used by the dashboard for
+    per-merchant scoping. Entries without a payment_intent_id (e.g. manual
+    adjustments) are excluded from the merchant-scoped view.
     """
     signed = case(
         (LedgerEntry.direction == LedgerEntryDirection.CREDIT, LedgerEntry.amount),
         else_=-LedgerEntry.amount,
     )
-    stmt = (
-        select(
-            LedgerEntry.currency,
-            LedgerEntry.account,
-            func.coalesce(func.sum(signed), 0).label("balance"),
-        )
-        .group_by(LedgerEntry.currency, LedgerEntry.account)
-        .order_by(LedgerEntry.currency.asc(), LedgerEntry.account.asc())
+    stmt = select(
+        LedgerEntry.currency,
+        LedgerEntry.account,
+        func.coalesce(func.sum(signed), 0).label("balance"),
     )
+
+    if merchant_id is not None:
+        # Lazy import to avoid a top-level model cycle.
+        from app.models.payment_intent import PaymentIntent
+
+        stmt = stmt.join(
+            PaymentIntent, PaymentIntent.id == LedgerEntry.payment_intent_id
+        ).where(PaymentIntent.merchant_id == merchant_id)
+
+    stmt = stmt.group_by(LedgerEntry.currency, LedgerEntry.account).order_by(
+        LedgerEntry.currency.asc(), LedgerEntry.account.asc()
+    )
+
     result = await session.execute(stmt)
     grouped: dict[str, dict[str, int]] = {}
     for currency, account, balance in result.all():

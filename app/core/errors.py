@@ -31,8 +31,12 @@ class ErrorCode(str, Enum):
     INVALID_PAYLOAD = "INVALID_PAYLOAD"
     WEBHOOK_HANDLER_FAILED = "WEBHOOK_HANDLER_FAILED"
 
-    # --- Auth / generic ------------------------------------------------------
+    # --- Auth / merchant API ------------------------------------------------
     UNAUTHORIZED = "UNAUTHORIZED"
+    MERCHANT_NOT_FOUND = "MERCHANT_NOT_FOUND"
+    API_KEY_NOT_FOUND = "API_KEY_NOT_FOUND"
+
+    # --- Generic ------------------------------------------------------------
     VALIDATION_ERROR = "VALIDATION_ERROR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -126,3 +130,15 @@ class UnauthorizedError(AppException):
     code = ErrorCode.UNAUTHORIZED
     http_status = status.HTTP_401_UNAUTHORIZED
     default_message = "missing or invalid credentials"
+
+
+class MerchantNotFoundError(AppException):
+    code = ErrorCode.MERCHANT_NOT_FOUND
+    http_status = status.HTTP_404_NOT_FOUND
+    default_message = "merchant not found"
+
+
+class APIKeyNotFoundError(AppException):
+    code = ErrorCode.API_KEY_NOT_FOUND
+    http_status = status.HTTP_404_NOT_FOUND
+    default_message = "api key not found"

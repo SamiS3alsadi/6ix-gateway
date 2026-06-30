@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("STRIPE_API_KEY", "sk_test_fake")
 os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_fake")
-os.environ.setdefault("DASHBOARD_API_KEY", "test-dashboard-key")
+os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 import pytest
 import pytest_asyncio
@@ -63,7 +63,45 @@ async def session(session_factory) -> AsyncIterator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def client(session_factory) -> AsyncIterator[AsyncClient]:
+async def merchant_and_key(session_factory) -> tuple[str, str]:
+    """Seed a Merchant + APIKey and return (merchant_id, raw_bearer_key)."""
+    from app.models.merchant import Merchant
+    from app.services import api_key as api_key_service
+
+    async with session_factory() as s:
+        m = Merchant(name="Test Merchant", email="test@example.com")
+        s.add(m)
+        await s.commit()
+        await s.refresh(m)
+        _, raw = await api_key_service.create_api_key(
+            s, merchant_id=m.id, name="test"
+        )
+        return m.id, raw
+
+
+@pytest_asyncio.fixture
+async def client(session_factory, merchant_and_key) -> AsyncIterator[AsyncClient]:
+    """Auth'd client — every request carries a valid Bearer token."""
+    _, raw_key = merchant_and_key
+
+    async def override_get_db() -> AsyncIterator[AsyncSession]:
+        async with session_factory() as s:
+            yield s
+
+    app.dependency_overrides[get_db] = override_get_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    ) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def no_auth_client(session_factory) -> AsyncIterator[AsyncClient]:
+    """Client with no Authorization header — for testing auth rejection."""
     async def override_get_db() -> AsyncIterator[AsyncSession]:
         async with session_factory() as s:
             yield s

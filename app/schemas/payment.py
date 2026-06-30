@@ -36,6 +36,7 @@ class PaymentIntentRead(BaseModel):
 
     id: str
     stripe_payment_intent_id: str | None
+    merchant_id: str | None
     amount: int
     currency: str
     amount_received: int

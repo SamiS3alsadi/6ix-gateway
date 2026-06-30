@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api import dashboard, payments, refunds, webhooks
+from app.api import dashboard, merchants, payments, refunds, webhooks
 from app.core.config import settings
 from app.core.errors import AppException, ErrorCode, ErrorResponse
 
@@ -109,3 +109,4 @@ app.include_router(payments.router)
 app.include_router(webhooks.router)
 app.include_router(refunds.router)
 app.include_router(dashboard.router)
+app.include_router(merchants.router)

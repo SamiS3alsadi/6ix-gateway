@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_api_key
 from app.core.db import get_db
+from app.models.merchant import Merchant
 from app.schemas.payment import PaymentIntentRead, RefundCreate
 from app.services import payment as payment_service
 
@@ -18,8 +20,10 @@ router = APIRouter(tags=["refunds"])
 async def refund_payment_intent(
     intent_id: str,
     payload: RefundCreate,
+    merchant: Merchant = Depends(require_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> PaymentIntentRead:
+    _ = merchant  # auth gate only — Section 8 may add merchant-scoping checks
     intent = await payment_service.refund_intent(
         db,
         intent_id,
