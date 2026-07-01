@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +25,28 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://gateway:gateway@localhost:5432/gateway",
         description="Async SQLAlchemy URL — must use the asyncpg driver.",
     )
+
+    @field_validator("database_url")
+    @classmethod
+    def _force_asyncpg_driver(cls, v: str) -> str:
+        """Rewrite bare Postgres URLs to the asyncpg driver.
+
+        Managed hosts (Railway, Heroku, Fly, Supabase) auto-inject a URL
+        like `postgresql://…` or `postgres://…`. SQLAlchemy routes those
+        through psycopg2 by default — a sync driver — which our async
+        engine can't use. Rewriting to `postgresql+asyncpg://…` here means
+        the app boots on those platforms without hand-editing the injected
+        env var. URLs that already carry an explicit `+driver` suffix
+        (e.g. `postgresql+asyncpg://`, `postgresql+psycopg2://`) are left
+        untouched; likewise non-Postgres URLs like `sqlite+aiosqlite://`.
+        """
+        if v.startswith("postgresql+"):
+            return v
+        if v.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + v[len("postgresql://"):]
+        if v.startswith("postgres://"):
+            return "postgresql+asyncpg://" + v[len("postgres://"):]
+        return v
 
     # Stripe
     stripe_api_key: str = Field(default="sk_test_placeholder")
