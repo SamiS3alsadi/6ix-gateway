@@ -36,6 +36,9 @@ class ErrorCode(str, Enum):
     MERCHANT_NOT_FOUND = "MERCHANT_NOT_FOUND"
     API_KEY_NOT_FOUND = "API_KEY_NOT_FOUND"
 
+    # --- Checkout sessions --------------------------------------------------
+    CHECKOUT_SESSION_NOT_FOUND = "CHECKOUT_SESSION_NOT_FOUND"
+
     # --- Generic ------------------------------------------------------------
     VALIDATION_ERROR = "VALIDATION_ERROR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -142,3 +145,9 @@ class APIKeyNotFoundError(AppException):
     code = ErrorCode.API_KEY_NOT_FOUND
     http_status = status.HTTP_404_NOT_FOUND
     default_message = "api key not found"
+
+
+class CheckoutSessionNotFoundError(AppException):
+    code = ErrorCode.CHECKOUT_SESSION_NOT_FOUND
+    http_status = status.HTTP_404_NOT_FOUND
+    default_message = "checkout session not found"

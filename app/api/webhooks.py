@@ -13,6 +13,7 @@ from app.core.errors import (
     WebhookHandlerFailedError,
 )
 from app.models.webhook_event import WebhookEvent
+from app.services import checkout_session as cs_service
 from app.services import payment as payment_service
 from app.services.stripe_client import stripe_client
 
@@ -99,11 +100,18 @@ async def _dispatch(db: AsyncSession, event: stripe.Event) -> None:
     obj = event["data"]["object"]
 
     if event_type == "payment_intent.succeeded":
-        await payment_service.apply_succeeded_event(
+        intent = await payment_service.apply_succeeded_event(
             db,
             stripe_payment_intent_id=obj["id"],
             amount_received=int(obj.get("amount_received", obj["amount"])),
         )
+        # If this PI is the backing intent for a hosted CheckoutSession,
+        # flip that session to COMPLETED. Idempotent on webhook replay
+        # (complete_session no-ops if already COMPLETED).
+        if intent is not None:
+            cs = await cs_service.find_by_payment_intent(db, intent.id)
+            if cs is not None:
+                await cs_service.complete_session(db, cs.id)
     elif event_type in {"payment_intent.payment_failed", "payment_intent.canceled"}:
         # Lookup-only — local cancel already booked the reversal. Webhook just
         # syncs the terminal status if a state diverged.
